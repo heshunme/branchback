@@ -1,0 +1,6 @@
+__pycache__/
+*.py[cod]
+.coverage
+
+# Local development records include private conversations and project evidence.
+/.dev_docs/
