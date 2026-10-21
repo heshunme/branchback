@@ -5,7 +5,7 @@ Run `python3 <skill-directory>/scripts/branchback.py` on Linux, WSL or macOS wit
 ## Invocation and recovery
 
 ```text
-branchback.py [--home PATH] [--repo PATH | --project-root PATH] [--json] COMMAND ...
+branchback.py [--home PATH] [--repo PATH | --project-root PATH] [--json [--context-format legacy|deduplicated]] COMMAND ...
 ```
 
 Global options precede the command. `--home` defaults to `BRANCHBACK_HOME`, then `~/.branchback`. `--repo` defaults to the current directory. `--project-root` identifies an explicit non-Git project. `--json` returns structured output; ordinary context output is readable text. Exit code 2 reports malformed input, stale context or storage errors on stderr.
@@ -27,7 +27,7 @@ Global options precede the command. `--home` defaults to `BRANCHBACK_HOME`, then
 `FILE` can be `-` for stdin. Use a quoted heredoc:
 
 ```bash
-python3 ~/.agents/skills/branchback/scripts/branchback.py --repo /path/to/repo --json start --input - <<'JSON'
+python3 ~/.agents/skills/branchback/scripts/branchback.py --repo /path/to/repo --json --context-format deduplicated start --input - <<'JSON'
 {
   "goal": "Choose a retrieval approach for the specified workload",
   "scope": "Compare quality and latency under the project's existing constraints",
@@ -39,6 +39,23 @@ JSON
 ```
 
 Keep the returned tree/session IDs and `context_token`. Mutations return the next context and token, so a separate read is needed only for recovery, intervening work, conflicts or newly available results.
+
+## Deduplicated JSON context
+
+Prefer `--json --context-format deduplicated` for agent context. It is a self-contained representation of the same information, not an incremental response or a generated summary. `--json` alone (or `--context-format legacy`) retains the original format; default text rendering is unchanged. Deduplicated format requires `--json`, checked before executing any command.
+
+Context responses have `context_format: "deduplicated-v1"`, shared `contracts` and `branches` tables keyed by node ID, and a `context` for the caller. A fork also includes `delegation` for the participant, using the same tables. In each context:
+
+- `root` is a contract ID and `ancestors` is an ordered list of contract IDs.
+- `current` contains `node` (a contract ID) and `latest_result` (the original result or null).
+- `children`, `siblings` and `root_branches` are ordered lists of branch IDs.
+- Session, context token, pending results, return instructions and all other context fields are unchanged.
+
+Contracts retain every original field, including all parent assessments. Branches retain the original overview fields, including activity and result counts. A node can appear in both tables: a brief must never replace its full contract. No result text, condition, unknown or evidence link is shortened.
+
+To reconstruct legacy context, resolve `root` and `ancestors` through `contracts`; combine `contracts[current.node]` with `current.latest_result`; resolve the three branch lists through `branches`. A single-context response unwraps `context`; a fork retains the `context`/`delegation` pair. Table entries must be copied if the consumer mutates them.
+
+Project listings, tree/node/history views and project rebind responses keep their original shape, without the format envelope. Storage and mutation inputs are unchanged; use the token inside the relevant context. Recovery needs only tree/session IDs and a fresh `read`: no previous response or table is required. To hand off a fork, pass IDs and let the participant read, or include the shared tables with its context; an isolated `delegation` object is not self-contained.
 
 ## Input contracts
 

@@ -11,7 +11,7 @@ Use a persistent question tree to connect local experiments to the actual task. 
 
 Resolve this skill's directory from the loaded `SKILL.md` path. Run its `scripts/branchback.py` with Python 3.10+ on Linux, WSL or macOS. Pass the actual target repository with `--repo`; the command may run from any directory.
 
-Read [the CLI reference](references/cli.md) when first invoking commands or when inputs are unclear. Global options precede the command. Supply mutation input as a JSON file or through `--input -` with a quoted heredoc; do not interpolate prose into shell syntax.
+Read [the CLI reference](references/cli.md) when first invoking commands or when inputs are unclear; reuse instructions still available in the current context. For structured context, prefer `--json --context-format deduplicated`; this shares repeated content within each response without omitting it. Global options precede the command. Supply mutation input as a JSON file or through `--input -` with a quoted heredoc; do not interpolate prose into shell syntax.
 
 At the beginning of existing work, or after resumption/compaction, use `read` to recover the tree and session. Without a tree ID, it lists existing work without selecting the latest tree. Keep tree/session IDs in the host's existing handoff or notes; the overview can recover them. Continue the same session for the same execution context; independent agents get separate sessions.
 
@@ -27,7 +27,7 @@ Revisit the parent when the return condition is met, the branch no longer change
 
 ## Return results with their scope
 
-`return` saves a result or progress and restores the parent context. Record observations, evidence, actual conditions, limitations and unknowns as available. A paused branch may contain only progress and a resumption point; do not invent experimental parameters or a positive conclusion.
+`return` saves a result or progress and restores the parent context. Keep detailed reasoning in existing artifacts; record a self-contained conclusion, evidence links, actual conditions, limitations and unknowns rather than copying the report. Completion messages can point to this result without repeating its fields. A paused branch may contain only progress and a resumption point; do not invent experimental parameters or a positive conclusion.
 
 Read the restored root, ancestor constraints and pending results before deciding. Include an assessment with the next actual action (`enter`, `return`, `revise` or `finish`):
 
@@ -37,7 +37,7 @@ Read the restored root, ancestor constraints and pending results before deciding
 
 Assess the pending result IDs shown in that context. Source results and conditions remain intact. A generic acknowledgment is not a scope assessment. The CLI checks structure and context freshness, not reasoning quality.
 
-Use the returned `context_token` for the next mutation. On a stale token, read and reconsider the action instead of blindly resubmitting old reasoning with a new token. Ancestor edits and new results may change the decision. Read full nodes when the overview is insufficient; omitted detail does not mean a branch was explored or ruled out.
+Use the context and `context_token` returned by the last operation directly; do not immediately repeat `read` unless recovery, intervening changes or new results require it. On a stale token, read and reconsider the action instead of blindly resubmitting old reasoning with a new token. Ancestor edits and new results may change the decision. Read full nodes when the overview is insufficient; omitted detail does not mean a branch was explored or ruled out.
 
 `finish` operates at the root. State the overall result and uncovered scope, including paused or unexamined branches. Closing this record is independent of experimental success or software delivery. Have other active sessions return/pause before closing the tree. To hand off unfinished root work, use `return` with `mode: paused`.
 

@@ -1,4 +1,5 @@
 import concurrent.futures
+from copy import deepcopy
 import json
 import os
 import shutil
@@ -13,12 +14,29 @@ SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 from bb_storage import Error, Store, atomic_json
 from bb_engine import Engine
+from branchback import deduplicate_context, render
 
 CLI = SCRIPTS / "branchback.py"
 ASSESSMENT = {"answers": "Only the measured case is supported", "local_only": "The threshold remains local",
               "next": "Investigate the unmeasured case before generalizing"}
 RESULT = {"summary": "Candidate reduced measured errors", "evidence": ["runs/001/result.json"],
           "conditions": ["Dataset A, threshold 0.4"], "limitations": ["Dataset B untested"]}
+
+
+def expand_context(output):
+    """Independent consumer of the documented wire format for equality checks."""
+    def expand(c):
+        c = deepcopy(c)
+        c["root"] = deepcopy(output["contracts"][c["root"]])
+        c["ancestors"] = [deepcopy(output["contracts"][key]) for key in c["ancestors"]]
+        c["current"] = {**deepcopy(output["contracts"][c["current"]["node"]]),
+                        "latest_result": c["current"]["latest_result"]}
+        for group in ("children", "siblings", "root_branches"):
+            c[group] = [deepcopy(output["branches"][key]) for key in c[group]]
+        return c
+    if "delegation" in output:
+        return {"context": expand(output["context"]), "delegation": expand(output["delegation"])}
+    return expand(output["context"])
 
 
 class BranchbackTest(unittest.TestCase):
@@ -60,9 +78,9 @@ class BranchbackTest(unittest.TestCase):
         self.store = Store(self.home, self.repo)
         self.engine = Engine(self.store)
 
-    def cli(self, command, body=None, repo=None, git=False):
+    def cli(self, command, body=None, repo=None, git=False, options=None):
         location = ["--repo", str(repo or self.repo)] if git else ["--project-root", str(repo or self.repo)]
-        args = [sys.executable, str(CLI), "--home", str(self.home), *location, "--json", *command]
+        args = [sys.executable, str(CLI), "--home", str(self.home), *location, "--json", *(options or []), *command]
         if body is not None:
             args += ["--input", "-"]
         return subprocess.run(args, input=json.dumps(body) if body is not None else None,
@@ -373,6 +391,103 @@ class BranchbackTest(unittest.TestCase):
         history = self.engine.read(root["tree"], view="history", limit=1)
         self.assertEqual(history["total"], 2)
         self.assertTrue(history["more"])
+
+    def assert_context_roundtrip(self, original):
+        before = deepcopy(original)
+        normalized = deduplicate_context(original)
+        self.assertEqual(expand_context(normalized), original)
+        self.assertEqual(original, before)
+        self.assertEqual(render(expand_context(normalized)), render(original))
+        return normalized
+
+    def test_deduplicated_context_lifecycle_is_lossless(self):
+        root = self.start()
+        self.assert_context_roundtrip(root)
+        parent = self.enter(root, case="Local fixture only", constraints=["Do not generalize"])
+        self.assert_context_roundtrip(parent)
+        a = self.enter(parent, fork=True)
+        b = self.enter(a["context"], fork=True)
+        for fork in (a, b):
+            normalized = self.assert_context_roundtrip(fork)
+            # The same node has a full contract in one context and a brief in another.
+            child_id = fork["delegation"]["current"]["id"]
+            self.assertIn("return_when", normalized["contracts"][child_id])
+            self.assertIn("active_sessions", normalized["branches"][child_id])
+        returned = self.action("return_", a["delegation"], mode="closed", result=RESULT)
+        self.assert_context_roundtrip(returned)
+        paused = self.action("return_", b["delegation"], mode="paused",
+                             result={"summary": "Incomplete", "unknowns": ["Other dataset"]})
+        self.assert_context_roundtrip(paused)
+        main = self.refresh(b["context"])
+        self.assertEqual(len(main["pending_results"]), 2)
+        self.assert_context_roundtrip(main)
+        resumed = self.engine.attach(root["tree"], {"resume": paused["session"]["id"]})
+        self.assert_context_roundtrip(resumed)
+        self.action("return_", resumed, mode="closed", result=RESULT)
+        back = self.action("return_", self.refresh(main), mode="closed", result=RESULT, assessment=ASSESSMENT)
+        self.assert_context_roundtrip(back)
+        next_child = self.enter(back, assessment=ASSESSMENT)
+        self.assert_context_roundtrip(next_child)
+        back = self.action("return_", next_child, mode="closed", result=RESULT)
+        done = self.action("finish", back, result=RESULT, assessment=ASSESSMENT)
+        self.assert_context_roundtrip(done)
+
+    def test_deduplicated_cli_recovery_and_guards(self):
+        options = ["--context-format", "deduplicated"]
+        started = self.cli(["start"], {"goal": "Recover without prior output", "scope": "Both workloads"}, options=options)
+        self.assertEqual(started.returncode, 0, started.stderr)
+        root = expand_context(json.loads(started.stdout))
+        fork = self.enter(root, fork=True)
+        child = fork["delegation"]
+        args = ["read", "--tree", child["tree"], "--session", child["session"]["id"]]
+        legacy = self.cli(args)
+        explicit_legacy = self.cli(args, options=["--context-format", "legacy"])
+        recovered = self.cli(args, options=options)
+        self.assertEqual(legacy.stdout, explicit_legacy.stdout)
+        self.assertEqual(recovered.returncode, 0, recovered.stderr)
+        child = expand_context(json.loads(recovered.stdout))
+        self.assertEqual(child, json.loads(legacy.stdout))
+        self.assertEqual(child["root"]["scope"], "Both workloads")
+        self.action("revise", fork["context"], reason="New workload", changes={"scope": "Three workloads"}, sources=["user"])
+        before = self.store.tree_path(root["tree"]).read_bytes()
+        command = ["return", "--tree", child["tree"], "--session", child["session"]["id"]]
+        body = {"context_token": child["context_token"], "mode": "closed", "result": RESULT}
+        failed = self.cli(command, body, options=options)
+        self.assertEqual(failed.returncode, 2)
+        self.assertIn("Context changed", failed.stderr)
+        self.assertEqual(self.store.tree_path(root["tree"]).read_bytes(), before)
+        recovered = self.cli(args, options=options)
+        body["context_token"] = expand_context(json.loads(recovered.stdout))["context_token"]
+        self.assertEqual(self.cli(command, body, options=options).returncode, 0)
+        main = self.refresh(root)
+        before = self.store.tree_path(root["tree"]).read_bytes()
+        failed = self.cli(["finish", "--tree", root["tree"], "--session", root["session"]["id"]],
+                          {"context_token": main["context_token"], "result": RESULT}, options=options)
+        self.assertEqual(failed.returncode, 2)
+        self.assertIn("assessment", failed.stderr)
+        self.assertEqual(self.store.tree_path(root["tree"]).read_bytes(), before)
+
+    def test_deduplicated_format_requires_json_before_mutation(self):
+        result = subprocess.run([sys.executable, str(CLI), "--home", str(self.home),
+                                 "--project-root", str(self.repo), "--context-format", "deduplicated",
+                                 "start", "--input", "-"], input=json.dumps({"goal": "Unused", "scope": "Unused"}),
+                                text=True, capture_output=True, timeout=20)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("requires --json", result.stderr)
+        self.assertFalse(self.home.exists())
+
+    def test_deduplicated_non_context_views_keep_legacy_shape(self):
+        root = self.start()
+        for args in (["read"], ["projects", "list"],
+                     ["read", "--tree", root["tree"], "--view", "tree"],
+                     ["read", "--tree", root["tree"], "--view", "history"],
+                     ["read", "--tree", root["tree"], "--view", "node", "--node", root["current"]["id"]]):
+            with self.subTest(args=args):
+                legacy = self.cli(args)
+                normalized = self.cli(args, options=["--context-format", "deduplicated"])
+                self.assertEqual(legacy.returncode, 0, legacy.stderr)
+                self.assertEqual(normalized.returncode, 0, normalized.stderr)
+                self.assertEqual(normalized.stdout, legacy.stdout)
 
 
 if __name__ == "__main__":

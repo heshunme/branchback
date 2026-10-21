@@ -2,6 +2,7 @@
 """Branchback CLI. Run from any worktree; --repo identifies the target project."""
 
 import argparse
+from copy import deepcopy
 import json
 from pathlib import Path
 import sys
@@ -96,12 +97,50 @@ def render(value):
     return json.dumps(value, ensure_ascii=False, indent=2)
 
 
+def deduplicate_context(value):
+    """Normalize context projections without changing engine state or summarizing text.
+
+    Contracts and branch briefs have different fields even for the same node.
+    Keep separate tables so neither projection can overwrite the other.
+    Non-context responses retain their existing shape.
+    """
+    if "context_token" not in value and "delegation" not in value:
+        return deepcopy(value)
+    contracts, branches = {}, {}
+
+    def reference(table, item):
+        identifier = item["id"]
+        if identifier in table and table[identifier] != item:
+            raise Error(f"Conflicting context projections for {identifier}")
+        table[identifier] = item
+        return identifier
+
+    def convert(original):
+        c = deepcopy(original)
+        c["root"] = reference(contracts, c["root"])
+        c["ancestors"] = [reference(contracts, n) for n in c["ancestors"]]
+        current = c["current"]
+        latest = current.pop("latest_result")
+        c["current"] = {"node": reference(contracts, current), "latest_result": latest}
+        for group in ("children", "siblings", "root_branches"):
+            c[group] = [reference(branches, n) for n in c[group]]
+        return c
+
+    if "delegation" in value:
+        contexts = {"context": convert(value["context"]), "delegation": convert(value["delegation"])}
+    else:
+        contexts = {"context": convert(value)}
+    return {"context_format": "deduplicated-v1", "contracts": contracts, "branches": branches, **contexts}
+
+
 def parser():
     p = argparse.ArgumentParser(description="Persist exploration branches and recover their parent scope (single-user local state).")
     p.add_argument("--home", help="State root (default BRANCHBACK_HOME or ~/.branchback)")
     p.add_argument("--repo", help="Repository/worktree to inspect (default current directory)")
     p.add_argument("--project-root", help="Explicit project root for non-Git work")
     p.add_argument("--json", action="store_true", help="Return structured output")
+    p.add_argument("--context-format", choices=("legacy", "deduplicated"), default="legacy",
+                   help="JSON context representation (default: legacy; deduplicated requires --json)")
     sub = p.add_subparsers(dest="command", required=True)
     for name, help_text in (("start", "Start a bounded exploration"), ("enter", "Enter or delegate a child question"),
                             ("return", "Save a scoped result and return/pause"), ("revise", "Revise the current contract with a reason"),
@@ -128,7 +167,10 @@ def parser():
 
 
 def main(argv=None):
-    args = parser().parse_args(argv)
+    cli_parser = parser()
+    args = cli_parser.parse_args(argv)
+    if args.context_format == "deduplicated" and not args.json:
+        cli_parser.error("--context-format deduplicated requires --json")
     try:
         if args.command == "projects" and args.project_action == "list":
             # Listing the registry must work even outside a Git repository.
@@ -152,6 +194,8 @@ def main(argv=None):
                 else:
                     action = engine.return_ if args.command == "return" else getattr(engine, args.command)
                     output = action(args.tree, args.session, body)
+        if args.context_format == "deduplicated":
+            output = deduplicate_context(output)
         print(json.dumps(output, ensure_ascii=False, indent=2) if args.json else render(output))
         return 0
     except (Error, OSError) as exc:
