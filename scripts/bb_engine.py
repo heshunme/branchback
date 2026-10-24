@@ -99,7 +99,7 @@ def contract(n):
             "return_when", "case", "coverage", "decision_effect", "notes", "version", "status",
             "started", "activation_trigger", "deferred_because", "followup_reason")
     value = {k: deepcopy(n[k]) for k in keys if k in n}
-    value["assessments"] = [{k: deepcopy(a[k]) for k in ("id", "source_results", "source_updates", "source_nodes", "answers", "local_only", "next") if k in a}
+    value["assessments"] = [{k: deepcopy(a[k]) for k in ("id", "at", "source_results", "source_updates", "source_nodes", "answers", "local_only", "next") if k in a}
                             for a in n["assessments"]]
     value["latest_update"] = deepcopy(n.get("updates", [])[-1]) if n.get("updates") else None
     return value

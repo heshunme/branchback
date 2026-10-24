@@ -72,7 +72,7 @@ This returns the full node, ancestor contracts, `target_token` and `state_warnin
 
 ## Deduplicated JSON context
 
-Prefer `--json --context-format deduplicated` for agent context. It is a self-contained representation of the same information, not an incremental response or a generated summary. `--json` alone (or `--context-format legacy`) retains the original format; default text rendering is unchanged. Deduplicated format requires `--json`, checked before executing any command.
+Prefer `--json --context-format deduplicated` for agent context. It is a self-contained representation of the same information, not an incremental response or a generated summary. `--json` alone (or `--context-format legacy`) retains the original nested format; choosing a JSON format does not affect text rendering. Deduplicated format requires `--json`, checked before executing any command.
 
 Context responses have `context_format: "deduplicated-v1"`, shared `contracts` and `branches` tables keyed by node ID, and a `context` for the caller. A fork also includes `delegation` for the participant, using the same tables. In each context:
 
@@ -187,6 +187,8 @@ Include this object with the next `enter`, `return`, `revise` or `finish`:
 
 All three fields are nonempty strings. Assess all pending result and lifecycle-update IDs in the displayed context. The parent saves `source_results`, `source_updates`, source node IDs and reasoning, while original records remain intact. This is a structure check, not validation of reasoning quality.
 
+Saved assessments also carry their recording time, `at`, which is exposed in both context formats. It is output metadata, not a mutation input. If an old assessment lacks `at`, the field remains absent and text displays its time as unknown. Text labels these as historical parent assessments and renders `next` as "Next step at that time"; the JSON field remains `next`. These records preserve the reasoning at each point, not an automatically maintained task list. Check their applicability against current constraints and evidence; timestamps alone do not establish which conclusion supersedes another. Assessing a result does not require a root revision unless shared constraints actually changed.
+
 ### revise
 
 Required: `context_token`, `reason`, `changes` (nonempty object). Changes affect the current node, or a `planned` node selected with `node` and `target_token`. Only plans can be revised without entering. Mutable fields are `question`, `scope`, `constraints`, `sources`, `parent_link`, `return_when`, `case`, `coverage`, `decision_effect`, `notes`, `activation_trigger`, `deferred_because`, `followup_reason`. Array fields are `constraints` and `sources`; others are strings. Status, parent identity and started history cannot be changed through `revise`.
@@ -217,6 +219,17 @@ read --tree ID --view history --offset 0 --limit 50
 Context includes root and ancestor contracts and their prior assessments, the current node and latest result, direct children/siblings, root-branch status, `pending_results`, `pending_updates`, `state_warnings` and the next mutation token. Contracts/briefs expose the latest lifecycle update and known start history; node detail retains all results, updates and assessments. Missing `started` (or null in a brief) means legacy start history is unknown. Branch activity includes sessions in descendant nodes. No extra model summarizes it. Tree and history views are paginated with total counts and `more`; `--limit` is 1–1000 and `--offset` is nonnegative.
 
 Tokens reflect the session position, ancestor revisions and current direct children/results. An unrelated branch's internal experiment need not invalidate a leaf. A changed ancestor or newly returned child result requires rereading and reconsidering the action. There is no force flag.
+
+Reuse returned context while it is available and fresh. During recovery, avoid combining a full context and several long documents into one output that may truncate. Ensure the current question, ancestor constraints, relevant historical assessments, pending items, recorded experimental conditions and token are visible; use targeted node/history reads for needed detail and reread affected content after truncation. A tool cache holding full JSON is not evidence that the model saw it. Reading a closed node also returns current ancestors: interpret its saved conclusion under those constraints before reopening or broadening its use.
+
+## Example: investigate a method under a target workload
+
+This is an illustrative workflow, not a reported experiment:
+
+1. Start with the question "Is method A suitable for the target workload?" and the known workload constraints. Check relevant earlier runs and code as needed; distinguish observations from hypotheses. A replication or changed-condition rerun can be the intended investigation.
+2. `plan` a scale check if the representative corpus is not yet available. When it is, refine the plan's `return_when` to identify evidence about behavior at that scale, then `enter` the same node. Perform authorized experiments with necessary controls and environment records; routine parameter changes do not each need a branch.
+3. If evidence refutes suitability under the tested conditions, `return` a scoped negative result with links to actual run artifacts and the observed conditions. If it remains inconclusive, preserve what was learned and what is missing; pause or close according to the question's scope. An unexpected effect can become a separate planned question without being explored immediately.
+4. At the parent, include an assessment with the next actual operation: state what the result answers, which conditions remain local, and why the next investigation reduces the remaining uncertainty. Broader adoption requires that assessment; a successful small run alone does not establish suitability for all workloads. Revise shared constraints only if they changed, and retain earlier results and assessments.
 
 ## Storage and relocation
 

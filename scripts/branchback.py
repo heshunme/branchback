@@ -39,10 +39,13 @@ def render_contract(n):
                 "started", "activation_trigger", "deferred_because", "followup_reason", "latest_update"):
         out += lines_for(key, n.get(key))
     for assessment in n.get("assessments", []):
-        out.append("Parent assessment " + assessment["id"] + " (sources: " + ", ".join(assessment["source_results"]) + "):")
+        out.append("Historical parent assessment " + assessment["id"] +
+                   " (at: " + (assessment.get("at") or "unknown") +
+                   "; sources: " + ", ".join(assessment["source_results"]) + "):")
         out += lines_for("Lifecycle sources", assessment.get("source_updates"))
-        for key in ("answers", "local_only", "next"):
+        for key in ("answers", "local_only"):
             out += lines_for(key, assessment[key])
+        out += lines_for("Next step at that time", assessment["next"])
     return out
 
 

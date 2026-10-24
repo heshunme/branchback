@@ -159,6 +159,61 @@ class BranchbackTest(BranchbackFixture):
         next_branch = self.enter(back, assessment=ASSESSMENT)
         self.assertEqual(next_branch["root"]["assessments"][0]["local_only"], ASSESSMENT["local_only"])
         self.assertEqual(next_branch["root"]["assessments"][0]["source_nodes"], [child["current"]["id"]])
+        saved = self.store.read_tree(root["tree"])["nodes"][root["current"]["id"]]["assessments"][0]
+        self.assertEqual(next_branch["root"]["assessments"][0]["at"], saved["at"])
+        self.assertEqual(next_branch["ancestors"][0]["assessments"], next_branch["root"]["assessments"])
+        self.assert_context_roundtrip(next_branch)
+
+    def test_assessment_time_survives_current_ancestor_and_cli_recovery(self):
+        parent = self.enter(self.start())
+        child = self.enter(parent)
+        back = self.action("return_", child, mode="closed", result=RESULT)
+        recorded_at = "2026-10-25T01:00:00+00:00"
+        with patch("bb_engine.now", return_value=recorded_at):
+            assessed = self.action("revise", back, assessment=ASSESSMENT,
+                                   reason="Record fixture rationale", changes={"notes": "Fixture spans both modes"})
+        expected = assessed["current"]["assessments"]
+        self.assertEqual(expected[0]["at"], recorded_at)
+        self.assert_context_roundtrip(assessed)
+        leaf = self.enter(assessed)
+        self.assertEqual(leaf["ancestors"][-1]["assessments"], expected)
+        self.assert_context_roundtrip(leaf)
+        path = self.store.tree_path(leaf["tree"])
+        before = path.read_bytes()
+        args = ["read", "--tree", leaf["tree"], "--session", leaf["session"]["id"]]
+        for fmt in ("legacy", "deduplicated"):
+            with self.subTest(format=fmt):
+                result = self.cli(args, options=["--context-format", fmt])
+                self.assertEqual(result.returncode, 0, result.stderr)
+                recovered = json.loads(result.stdout)
+                if fmt == "deduplicated":
+                    recovered = expand_context(recovered)
+                self.assertEqual(recovered, leaf)
+        text = render(leaf)
+        self.assertIn("Historical parent assessment " + expected[0]["id"], text)
+        self.assertIn("at: " + recorded_at, text)
+        self.assertIn("Next step at that time: " + ASSESSMENT["next"], text)
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_assessment_without_time_remains_unknown_on_read(self):
+        root = self.start()
+        back = self.action("return_", self.enter(root), mode="closed", result=RESULT)
+        leaf = self.enter(back, assessment=ASSESSMENT)
+        tree = self.store.read_tree(root["tree"])
+        del tree["nodes"][tree["root"]]["assessments"][0]["at"]
+        path = self.store.tree_path(root["tree"])
+        for schema in (1, 2):
+            with self.subTest(schema=schema):
+                tree["schema"] = schema
+                atomic_json(path, tree)
+                before = path.read_bytes()
+                recovered = self.refresh(leaf)
+                self.assertNotIn("at", recovered["root"]["assessments"][0])
+                self.assertEqual(recovered["root"]["assessments"][0]["next"], ASSESSMENT["next"])
+                self.assertEqual(recovered["context_token"], leaf["context_token"])
+                self.assert_context_roundtrip(recovered)
+                self.assertIn("at: unknown", render(recovered))
+                self.assertEqual(path.read_bytes(), before)
 
     def test_overview_reports_activity_below_an_ancestor(self):
         root = self.start()
