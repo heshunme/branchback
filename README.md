@@ -24,6 +24,10 @@ python3 ~/.agents/skills/branchback/scripts/branchback.py --help
 
 完整命令、JSON 输入和并行流程见 [CLI 参考](references/cli.md)。实验事实优先引用现有产物，节点内部无需逐轮更新记录。
 
+可用 `plan` 提前把问题挂到指定父节点，当前位置保持不变；选中后以 `enter` 开始。节点区分 `planned`、`open`、`paused`、`closed` 和 `abandoned`。`abandon` 保存放弃原因，`restore` 恢复待续问题；`handoff` 只暂停自己的 session，让其他执行者继续。
+
+关闭父节点时，子树只能保留计划、已关闭或已放弃的节点，计划范围须在 `uncovered` 中说明。`open` 或 `paused` 后代必须先处置。旧树可读取，成功写入时升级为 schema 2，旧状态与历史不会被自动重新分类；后续使用更新后的 CLI。
+
 状态位于 `~/.branchback/`；`projects.json` 维护仓库公共 Git 目录与 `projects/<项目名>-<短ID>/` 的关联。各 worktree 共用状态，各会话保留自己的位置。测试用 `--home` 或 `BRANCHBACK_HOME` 隔离状态。
 
 ## 开发与验证

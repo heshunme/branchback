@@ -21,6 +21,8 @@ Start a tree for a bounded research goal. Preserve the user's overall purpose, s
 
 Create a child for a separately answerable subproblem whose result needs interpretation at the parent level. Explain its parent link and return condition. Cases, decision effects and detailed assumptions can remain unknown at entry.
 
+Use `plan` for a known question that should exist before work starts. It creates a `planned` node without entering, delegating or producing a research result. Record the parent link and known sources, trigger or deferral reason; complete `return_when` before entering the same node. Plans can be nested. For a different parent, read its node detail and ancestors, then pass its `target_token` alongside your session's `context_token`. Stay within the session boundary. A plan below a closed ancestor needs `followup_reason` explaining its future scope; reopen the ancestor if the old question actually remains unanswered. Revise an unstarted plan by target ID without entering it.
+
 Parameter adjustments, script runs and routine troubleshooting within the same question do not each need a node. Work normally inside the node; use existing logs and fixed artifacts as evidence without a parallel narration after each step. Use `revise` when the question changes or an unrecoverable rationale merits a short note.
 
 Revisit the parent when the return condition is met, the branch no longer changes the parent decision, or a different subproblem is taking over. Before using a case-specific finding as a shared prompt rule, default parameter or general implementation constraint, restore the appropriate parent context and assess that broader use.
@@ -29,17 +31,21 @@ Revisit the parent when the return condition is met, the branch no longer change
 
 `return` saves a result or progress and restores the parent context. Keep detailed reasoning in existing artifacts; record a self-contained conclusion, evidence links, actual conditions, limitations and unknowns rather than copying the report. Completion messages can point to this result without repeating its fields. A paused branch may contain only progress and a resumption point; do not invent experimental parameters or a positive conclusion.
 
-Read the restored root, ancestor constraints and pending results before deciding. Include an assessment with the next actual action (`enter`, `return`, `revise` or `finish`):
+Read the restored root, ancestor constraints, pending results and lifecycle updates before deciding. Include an assessment with the next actual action (`enter`, `return`, `revise` or `finish`):
 
 - `answers`: which part of the parent question the evidence answers;
 - `local_only`: which conditions remain local or wider uses remain unverified;
 - `next`: the next step and why it advances the parent question.
 
-Assess the pending result IDs shown in that context. Source results and conditions remain intact. A generic acknowledgment is not a scope assessment. The CLI checks structure and context freshness, not reasoning quality.
+Assess the pending result and update IDs shown in that context. Source results and conditions remain intact. Plan registration and maintenance leave them pending; do not use maintenance to bypass assessment when adopting a conclusion. A generic acknowledgment is not a scope assessment. The CLI checks structure and context freshness, not reasoning quality.
 
 Use the context and `context_token` returned by the last operation directly; do not immediately repeat `read` unless recovery, intervening changes or new results require it. On a stale token, read and reconsider the action instead of blindly resubmitting old reasoning with a new token. Ancestor edits and new results may change the decision. Read full nodes when the overview is insufficient; omitted detail does not mean a branch was explored or ruled out.
 
-`finish` operates at the root. State the overall result and uncovered scope, including paused or unexamined branches. Closing this record is independent of experimental success or software delivery. Have other active sessions return/pause before closing the tree. To hand off unfinished root work, use `return` with `mode: paused`.
+`finish` operates at the root. Closing any node requires descendants to be `planned`, `closed` or `abandoned`; describe remaining plans in `uncovered`. Resolve `open` and `paused` branches before closure, rather than relabeling prior work as `planned`. Closure records the scoped outcome, not experimental success or delivery acceptance. Child completion never automatically closes its parent.
+
+Use `abandon` with a reason when deciding not to pursue a question. It preserves prior evidence and notifies the parent without fabricating a result for an unstarted plan. Unfinished descendants need individual disposition or an explicit `subtree: true` abandonment; completed nodes remain intact. Use `restore` with a reason to reconsider: known unstarted nodes return to `planned`, previously started or historically unknown nodes to `paused`. Restore/open necessary ancestors from the top down, then enter only the selected path.
+
+Pausing a node pauses its branch: no open descendants or other active sessions may remain. After participants hand off, `return` with `mode: paused, subtree: true` can pause remaining open descendants. To leave only your execution context while other work continues, use `handoff` with a resumption reason and optional real progress result; the node stays open. Resume that session using `attach`. The CLI never stops external agents.
 
 ## Parallel sessions and worktrees
 
@@ -54,6 +60,8 @@ Record the tested revision and preserve relevant diffs or fixed run artifacts wh
 ## Keep responsibility bounded
 
 JSON stores retain contracts, results, assessments and revision history. `~/.branchback/projects.json` maps repositories to `projects/<name>-<short-id>/`. Use `--home` or `BRANCHBACK_HOME` for isolated trials. `projects rebind` handles intentional local repository moves; matching remotes do not justify merging unrelated clones.
+
+Schema 1 trees remain readable. Successful writes upgrade to schema 2 without classifying old paused nodes or rewriting history. Treat `state_warnings` as legacy inconsistencies to resolve explicitly in the affected branch; old closed nodes with paused descendants need reopening and disposition before closing again. Use the updated CLI for schema 2 state.
 
 Keep product decisions in existing authoritative documents. Research may include prototypes; delivery may expose new research. Reference shared artifacts without requiring phase changes, shared task state or another skill. There is no account system or distributed/cross-machine synchronization.
 

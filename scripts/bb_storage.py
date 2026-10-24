@@ -178,7 +178,7 @@ class Store:
 
     def read_tree(self, tree_id):
         tree = load_json(self.tree_path(tree_id))
-        if not isinstance(tree, dict) or tree.get("schema") != 1 or tree.get("id") != tree_id:
+        if not isinstance(tree, dict) or tree.get("schema") not in (1, 2) or tree.get("id") != tree_id:
             raise Error("Unsupported or invalid exploration state")
         for key in ("nodes", "sessions"):
             if not isinstance(tree.get(key), dict):
@@ -204,4 +204,7 @@ class Store:
         with locked(path.with_suffix(".lock")):
             tree = self.read_tree(tree_id)
             yield tree
+            # Older readers must not write trees containing the new lifecycle states.
+            # Upgrade only on successful writes; historical nodes/events stay intact.
+            tree["schema"] = 2
             atomic_json(path, tree)

@@ -35,10 +35,12 @@ def lines_for(label, value):
 
 def render_contract(n):
     out = [f'{n["id"]} [{n["status"]}] {n["question"]}']
-    for key in ("scope", "constraints", "sources", "parent_link", "return_when", "case", "coverage", "decision_effect", "notes"):
+    for key in ("scope", "constraints", "sources", "parent_link", "return_when", "case", "coverage", "decision_effect", "notes",
+                "started", "activation_trigger", "deferred_because", "followup_reason", "latest_update"):
         out += lines_for(key, n.get(key))
     for assessment in n.get("assessments", []):
         out.append("Parent assessment " + assessment["id"] + " (sources: " + ", ".join(assessment["source_results"]) + "):")
+        out += lines_for("Lifecycle sources", assessment.get("source_updates"))
         for key in ("answers", "local_only", "next"):
             out += lines_for(key, assessment[key])
     return out
@@ -59,6 +61,7 @@ def render_context(value):
     out = [f'tree: {value["tree"]} [{value["tree_status"]}]',
            f'session: {s["id"]} ({s["label"]}) [{s["status"]}]; boundary: {s["boundary"]}',
            f'context_token: {value["context_token"]}', "", "Root:"]
+    out[3:3] = lines_for("Last session handoff", s.get("handoff"))
     out += render_contract(value["root"])
     for ancestor in value["ancestors"]:
         if ancestor["id"] != value["root"]["id"]:
@@ -75,6 +78,8 @@ def render_context(value):
             out += ["", title + ":"]
             for item in items:
                 out.append(f'  {item["id"]} [{item["status"]}] {item["question"]}; results={item["results"]}; active={",".join(item["active_sessions"]) or "none"}')
+                if item.get("latest_update"):
+                    out.append("    " + item["latest_update"]["kind"] + ": " + item["latest_update"]["reason"])
     if value["pending_results"]:
         out += ["", "Returned results awaiting parent assessment (answers, local_only, next):"]
         for p in value["pending_results"]:
@@ -84,7 +89,11 @@ def render_context(value):
         out += ["", f'Delegated boundary returned to {parent["id"]}: {parent["question"]}',
                 "Full parent scope is shown above in root/ancestors."]
         out += lines_for("Parent pending result IDs", value["returned_to"]["pending_result_ids"])
+        out += lines_for("Parent pending lifecycle update IDs", value["returned_to"].get("pending_update_ids"))
         out += [value["next_action"]]
+    out += lines_for("Lifecycle updates awaiting parent assessment", value.get("pending_updates"))
+    for key in ("planned_node", "revised_node", "abandoned_nodes", "restored_node", "target_token", "state_warnings"):
+        out += lines_for(key, value.get(key))
     out += ["", value["detail_note"]]
     return "\n".join(out)
 
@@ -143,6 +152,10 @@ def parser():
                    help="JSON context representation (default: legacy; deduplicated requires --json)")
     sub = p.add_subparsers(dest="command", required=True)
     for name, help_text in (("start", "Start a bounded exploration"), ("enter", "Enter or delegate a child question"),
+                            ("plan", "Register a planned question without entering it"),
+                            ("abandon", "Explicitly abandon a question or subtree"),
+                            ("restore", "Restore an abandoned question without starting it"),
+                            ("handoff", "Pause only this session, leaving research open"),
                             ("return", "Save a scoped result and return/pause"), ("revise", "Revise the current contract with a reason"),
                             ("finish", "Close the root with evidence and uncovered scope"), ("attach", "Attach an independent session or resume one")):
         command = sub.add_parser(name, help=help_text)

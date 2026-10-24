@@ -39,7 +39,7 @@ def expand_context(output):
     return expand(output["context"])
 
 
-class BranchbackTest(unittest.TestCase):
+class BranchbackFixture(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="branchback-test-")
         self.addCleanup(self.temp.cleanup)
@@ -86,6 +86,7 @@ class BranchbackTest(unittest.TestCase):
         return subprocess.run(args, input=json.dumps(body) if body is not None else None,
                               text=True, capture_output=True, timeout=20)
 
+class BranchbackTest(BranchbackFixture):
     def test_read_does_not_create_state(self):
         self.assertEqual(self.engine.read()["trees"], [])
         self.assertFalse(self.home.exists())
@@ -217,14 +218,14 @@ class BranchbackTest(unittest.TestCase):
         with self.assertRaisesRegex(Error, "inactive"):
             self.action("revise", returned, reason="Attempt parent edit", changes={"question": "Replace goal"})
 
-    def test_finish_allows_explicitly_uncovered_paused_branch(self):
+    def test_finish_rejects_paused_branch_even_with_uncovered(self):
         root = self.start()
         child = self.enter(root)
         back = self.action("return_", child, mode="paused", result={"summary": "No experiment executed"})
-        with self.assertRaisesRegex(Error, "uncovered"):
+        with self.assertRaisesRegex(Error, "open or paused"):
             self.action("finish", back, assessment=ASSESSMENT, result={"summary": "Partial exploration"})
-        done = self.action("finish", back, assessment=ASSESSMENT, result={"summary": "Partial exploration"}, uncovered=["Candidate A remains untested"])
-        self.assertEqual(done["current"]["latest_result"]["unresolved_nodes"][0]["status"], "paused")
+        with self.assertRaisesRegex(Error, "open or paused"):
+            self.action("finish", back, assessment=ASSESSMENT, result={"summary": "Partial exploration"}, uncovered=["Candidate A remains untested"])
 
     def test_child_cannot_be_closed_while_descendant_is_active(self):
         parent = self.enter(self.start())
@@ -235,21 +236,21 @@ class BranchbackTest(unittest.TestCase):
     def test_resume_descendant_requires_reopening_closed_ancestor(self):
         parent = self.enter(self.start())
         fork = self.enter(parent, fork=True)
-        leaf = self.action("return_", fork["delegation"], mode="paused", result={"summary": "Awaiting fixtures"})
+        leaf = self.action("return_", fork["delegation"], mode="closed", result={"summary": "Fixture scope answered"})
         root = self.action("return_", self.refresh(fork["context"]), mode="closed",
                            assessment=ASSESSMENT, result={"summary": "Branch deferred based on current evidence"})
         path = self.store.tree_path(root["tree"])
         before = path.read_bytes()
-        for body in ({"resume": leaf["session"]["id"]},
+        for body in ({"resume": leaf["session"]["id"], "reopen_reason": "New fixture"},
                      {"node": leaf["current"]["id"], "reopen_reason": "New fixture"}):
             with self.assertRaisesRegex(Error, "Closed ancestor"):
                 self.engine.attach(root["tree"], body)
         self.assertEqual(path.read_bytes(), before)
         self.action("enter", root, node=parent["current"]["id"],
                     reopen_reason="New fixture changes the parent decision", assessment=ASSESSMENT)
-        resumed = self.engine.attach(root["tree"], {"resume": leaf["session"]["id"]})
+        resumed = self.engine.attach(root["tree"], {"resume": leaf["session"]["id"], "reopen_reason": "New fixture"})
         self.assertEqual(resumed["session"]["status"], "active")
-        self.assertEqual(resumed["current"]["latest_result"]["summary"], "Awaiting fixtures")
+        self.assertEqual(resumed["current"]["latest_result"]["summary"], "Fixture scope answered")
 
     def test_each_return_revision_remains_pending_until_assessed(self):
         root = self.start()
